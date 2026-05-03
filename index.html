@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>대구시 시간대별 서비스인구</title>
+    <link rel="stylesheet" href="node_modules/@yadoran-2025/booong-design-system/dist/booong.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="map-pane" aria-label="대구시 서비스인구 지도">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Daegu Service Population</p>
+            <h1>대구시 시간대별 서비스인구</h1>
+          </div>
+          <div class="source-pill" id="sourceInfo">데이터 로딩 중</div>
+        </header>
+
+        <div class="map-wrap">
+          <canvas id="mapCanvas" aria-label="동별 서비스인구 단계구분도"></canvas>
+          <div class="tooltip" id="tooltip" role="status"></div>
+          <div class="legend" aria-label="서비스인구 범례">
+            <span>낮음</span>
+            <div class="legend-ramp"></div>
+            <span>높음</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="side-panel" aria-label="서비스인구 조작 패널">
+        <section class="control-group">
+          <label for="hourRange">시간</label>
+          <div class="hour-display">
+            <strong id="hourLabel">--시</strong>
+            <button id="playButton" type="button" title="시간 자동 재생" aria-label="시간 자동 재생">▶</button>
+          </div>
+          <input id="hourRange" type="range" min="0" max="0" value="0" />
+          <div class="hint" id="hourHint">사용 가능한 시간대를 확인하는 중</div>
+        </section>
+
+        <section class="stats-grid" aria-label="요약 지표">
+          <div>
+            <span>총 서비스인구</span>
+            <strong id="totalPopulation">-</strong>
+          </div>
+          <div>
+            <span>최고 행정동</span>
+            <strong id="topArea">-</strong>
+          </div>
+          <div>
+            <span>표시 행정동</span>
+            <strong id="areaCount">-</strong>
+          </div>
+          <div>
+            <span>평균</span>
+            <strong id="averagePopulation">-</strong>
+          </div>
+        </section>
+
+        <section class="control-group">
+          <label for="districtFilter">구·군</label>
+          <select id="districtFilter"></select>
+        </section>
+
+        <section class="control-group">
+          <label for="searchInput">행정동 검색</label>
+          <input id="searchInput" type="search" placeholder="예: 삼덕동" autocomplete="off" />
+        </section>
+
+        <section class="rank-section">
+          <div class="rank-head">
+            <h2>행정동 순위</h2>
+            <span id="rankMeta">-</span>
+          </div>
+          <ol id="rankList"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <script src="data/daegu-service-population.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
