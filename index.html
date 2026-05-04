@@ -24,8 +24,12 @@
         <div class="map-wrap">
           <canvas id="mapCanvas" aria-label="행정동 경계 위 그리드 유동인구 지도"></canvas>
           <div class="tooltip" id="tooltip" role="status"></div>
+          <div class="subway-legend" id="subwayLegend" aria-label="지하철 호선 범례">
+            <div class="legend-title">지하철 노선</div>
+            <div class="subway-legend-items" id="subwayLegendItems"></div>
+          </div>
           <div class="legend" aria-label="유동인구 색상 범례">
-            <div class="legend-title">그리드 유동인구</div>
+            <div class="legend-title" id="legendTitle">그리드 유동인구</div>
             <div class="legend-items" id="legendItems"></div>
           </div>
         </div>
@@ -43,12 +47,20 @@
             <span>18</span>
             <span>23</span>
           </div>
+          <p class="time-note" id="timeNote">인구밀도는 시간대와 무관한 거주 기준 값입니다.</p>
         </footer>
       </section>
 
       <aside class="info-panel" aria-label="지도 요약 정보">
+        <div class="mode-switch" role="group" aria-label="지도 표시 방식">
+          <button class="is-active" type="button" data-map-mode="flow" aria-pressed="true">유동인구</button>
+          <button type="button" data-map-mode="density" aria-pressed="false">인구밀도</button>
+        </div>
+        <button class="layer-toggle is-active" type="button" id="subwayToggle" aria-pressed="true">
+          지하철 노선·역 표시
+        </button>
         <section class="metric-block">
-          <span>최대 그리드</span>
+          <span id="maxMetricLabel">최대 그리드</span>
           <strong id="maxGrid">-</strong>
         </section>
         <section class="metric-block">
@@ -56,14 +68,78 @@
           <strong id="panelDong">-</strong>
         </section>
         <section class="notes">
-          <h2>색상 기준</h2>
-          <p>모든 시간대에 같은 절대 범위를 적용합니다. 슬라이더를 움직여도 같은 인구 구간은 같은 색으로 표시됩니다.</p>
+          <h2 id="notesTitle">색상 기준</h2>
+          <p id="notesText">모든 시간대에 같은 절대 범위를 적용합니다. 슬라이더를 움직여도 같은 인구 구간은 같은 색으로 표시됩니다.</p>
         </section>
+        <button class="map-help-button" type="button" id="mapHelpOpen" aria-haspopup="dialog">
+          이 지도는 무엇인가요?
+        </button>
       </aside>
+
+      <dialog class="map-help-dialog" id="mapHelpDialog" aria-labelledby="mapHelpTitle">
+        <div class="map-help-modal">
+          <header class="map-help-header">
+            <h2 id="mapHelpTitle">이 지도는 무엇인가요?</h2>
+            <button class="map-help-close" type="button" id="mapHelpClose" aria-label="팝업 닫기">×</button>
+          </header>
+          <div class="map-help-content">
+            <section>
+              <h3>데이터 출처</h3>
+              <ul>
+                <li><strong>유동인구</strong>: 2025년 12월 기준, 대구광역시 서비스인구 분석정보 시스템</li>
+                <li><strong>거주인구</strong>: 2025년 12월 기준, 행정안전부 주민등록인구통계</li>
+                <li><strong>토지 가격(공시지가)</strong>: 2026년 2월 10일 기준, V-World 공간 데이터</li>
+                <li><strong>지하철 노선</strong>: 2025년 4월 17일 기준, 한국철도기술연구원(KRIC) 철도 데이터포털</li>
+                <li><strong>행정동 경계</strong>: 국토교통부 행정동 경계 데이터(BND_ADM_DONG_PG), 국가공간정보포털 / V-World</li>
+              </ul>
+            </section>
+            <section>
+              <h3>데이터 처리 방법</h3>
+              <ul>
+                <li>행정동 단위 유동인구 데이터를 격자 단위로 재구성했습니다.</li>
+                <li>행정동 경계와 격자를 교차하여 면적 비율 기반으로 인구를 분배했습니다.</li>
+                <li>동일 격자에 속한 값을 합산하여 격자별 유동인구를 산출했습니다.</li>
+                <li>거주인구는 행정동 면적을 이용해 인구밀도(명/km²)로 계산했습니다.</li>
+                <li>공시지가는 필지 단위 데이터를 그대로 사용했습니다.</li>
+                <li>웹 성능을 위해 일부 데이터는 간소화(Simplify) 처리했습니다.</li>
+              </ul>
+              <p><strong>쉽게 말해, 행정동 데이터를 더 작은 공간 단위로 나눠서 지도에 표현한 것입니다.</strong></p>
+            </section>
+            <section>
+              <h3>이렇게 보면 좋아요</h3>
+              <ul>
+                <li><strong>유동인구</strong>: 시간대별로 사람이 몰리는 지역을 볼 수 있습니다.</li>
+                <li><strong>거주인구 밀도</strong>: 실제로 사람들이 많이 사는 지역을 볼 수 있습니다.</li>
+                <li><strong>지가</strong>: 토지 가치가 높은 지역을 볼 수 있습니다.</li>
+              </ul>
+              <p>세 가지를 함께 보면 도심, 상업지역, 주거지역의 구조를 파악할 수 있습니다.</p>
+            </section>
+            <section>
+              <h3>유의사항</h3>
+              <ul>
+                <li>본 지도는 실제 위치를 직접 측정한 것이 아닌 추정 기반 시각화입니다.</li>
+                <li>유동인구는 행정동 내부에 균등하게 분포한다고 가정하여 계산되었습니다.</li>
+                <li>건물, 도로, 상권 등 세부 공간 구조는 반영되지 않았습니다.</li>
+                <li>공시지가는 실제 거래가격과 차이가 있을 수 있습니다.</li>
+                <li>데이터 간 기준 시점이 서로 다를 수 있습니다.</li>
+              </ul>
+            </section>
+            <section>
+              <h3>데이터 제외 및 결측 안내</h3>
+              <ul>
+                <li>유동인구 자료 부재로 인해 군위군은 분석에서 제외되었습니다.</li>
+                <li>유동인구 자료에서 유천동은 데이터가 없어 포함되지 않았습니다.</li>
+              </ul>
+            </section>
+          </div>
+        </div>
+      </dialog>
     </main>
 
     <script src="data/daegu-admin-boundaries.js"></script>
     <script src="data/daegu-grid-flow.js"></script>
+    <script src="data/daegu-density.js"></script>
+    <script src="data/daegu-subway.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
