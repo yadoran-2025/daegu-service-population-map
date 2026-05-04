@@ -1,75 +1,113 @@
-const data = window.DAEGU_SERVICE_POPULATION;
+const adminData = window.DAEGU_ADMIN_BOUNDARIES;
+const gridData = window.DAEGU_GRID_FLOW;
+
 const canvas = document.getElementById("mapCanvas");
 const ctx = canvas.getContext("2d");
 const tooltip = document.getElementById("tooltip");
 const hourRange = document.getElementById("hourRange");
 const hourLabel = document.getElementById("hourLabel");
-const hourHint = document.getElementById("hourHint");
-const playButton = document.getElementById("playButton");
-const districtFilter = document.getElementById("districtFilter");
-const searchInput = document.getElementById("searchInput");
-const rankList = document.getElementById("rankList");
-const rankMeta = document.getElementById("rankMeta");
-const sourceInfo = document.getElementById("sourceInfo");
-const totalPopulation = document.getElementById("totalPopulation");
-const topArea = document.getElementById("topArea");
-const areaCount = document.getElementById("areaCount");
-const averagePopulation = document.getElementById("averagePopulation");
+const selectedDong = document.getElementById("selectedDong");
+const panelDong = document.getElementById("panelDong");
+const maxGrid = document.getElementById("maxGrid");
+const legendItems = document.getElementById("legendItems");
 
 const numberFormat = new Intl.NumberFormat("ko-KR");
-const hours = data.hours.length ? data.hours : ["--"];
 const state = {
   hourIndex: 0,
-  district: "전체",
-  query: "",
-  hoverCode: null,
-  selectedCode: null,
+  selectedAdminCode: null,
+  hoverGridId: null,
+  mouse: { x: 0, y: 0 },
+  baseTransform: { scale: 1, offsetX: 0, offsetY: 0 },
   transform: { scale: 1, offsetX: 0, offsetY: 0 },
-  paths: new Map(),
-  timer: null,
+  zoom: 1,
+  dpr: 1,
+  panX: 0,
+  panY: 0,
+  isDragging: false,
+  dragMoved: false,
+  dragStart: { x: 0, y: 0 },
+  dragPanStart: { x: 0, y: 0 },
+  adminPaths: new Map(),
+  gridPaths: new Map(),
 };
 
-const colors = ["#dce9df", "#b8d9bf", "#7ab59c", "#3b927f", "#e0a13d", "#b94a62"];
-
-function populationOf(feature) {
-  return feature.populations[hours[state.hourIndex]] ?? null;
+function currentHour() {
+  return gridData.hours[state.hourIndex];
 }
 
-function visibleFeatures() {
-  const query = state.query.trim().toLowerCase();
-  return data.features.filter((feature) => {
-    const districtMatch = state.district === "전체" || feature.district === state.district;
-    const queryMatch = !query || feature.name.toLowerCase().includes(query);
-    return districtMatch && queryMatch;
-  });
+function currentValue(grid) {
+  return grid.values[currentHour()] ?? 0;
 }
 
-function colorFor(value, min, max) {
-  if (value === null || Number.isNaN(value)) return "#d8d6cf";
-  if (max <= min) return colors[3];
-  const t = (value - min) / (max - min);
-  const index = Math.min(colors.length - 1, Math.floor(t * colors.length));
-  return colors[index];
+function colorFor(value) {
+  const breaks = gridData.breaks;
+  const colors = gridData.colors;
+  for (let i = breaks.length - 1; i >= 0; i -= 1) {
+    if (value >= breaks[i]) return colors[i];
+  }
+  return colors[0];
+}
+
+function labelForBreak(index) {
+  const breaks = gridData.breaks;
+  if (index === breaks.length - 1) return `${numberFormat.format(breaks[index])}+`;
+  return `${numberFormat.format(breaks[index])}~${numberFormat.format(breaks[index + 1])}`;
+}
+
+function buildLegend() {
+  legendItems.innerHTML = gridData.colors
+    .map(
+      (color, index) => `
+        <div class="legend-item">
+          <span class="swatch" style="background:${color}"></span>
+          <span>${labelForBreak(index)}명</span>
+        </div>
+      `
+    )
+    .join("");
 }
 
 function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
+  state.dpr = dpr;
   canvas.width = Math.max(1, Math.round(rect.width * dpr));
   canvas.height = Math.max(1, Math.round(rect.height * dpr));
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
   computeTransform(rect.width, rect.height);
+  rebuildPaths();
   draw();
 }
 
 function computeTransform(width, height) {
-  const [minX, minY, maxX, maxY] = data.bounds;
-  const padding = Math.min(width, height) < 560 ? 24 : 42;
+  const [minX, minY, maxX, maxY] = adminData.bounds;
+  const padding = Math.min(width, height) < 560 ? 18 : 36;
   const scale = Math.min((width - padding * 2) / (maxX - minX), (height - padding * 2) / (maxY - minY));
-  state.transform = {
+  state.baseTransform = {
     scale,
     offsetX: (width - (maxX - minX) * scale) / 2 - minX * scale,
     offsetY: (height + (maxY - minY) * scale) / 2 + minY * scale,
+  };
+  applyZoomTransform();
+}
+
+function applyZoomTransform(anchorX, anchorY, previousZoom = state.zoom) {
+  const base = state.baseTransform;
+  const previousScale = base.scale * previousZoom;
+  const nextScale = base.scale * state.zoom;
+
+  if (anchorX !== undefined && anchorY !== undefined) {
+    const mapX = (anchorX - (base.offsetX + state.panX)) / previousScale;
+    const mapY = (anchorY - (base.offsetY + state.panY)) / previousScale;
+    state.panX = anchorX - base.offsetX - mapX * nextScale;
+    state.panY = anchorY - base.offsetY - mapY * nextScale;
+  }
+
+  state.transform = {
+    scale: nextScale,
+    offsetX: base.offsetX + state.panX,
+    offsetY: base.offsetY + state.panY,
   };
 }
 
@@ -78,9 +116,9 @@ function project(point) {
   return [point[0] * scale + offsetX, -point[1] * scale + offsetY];
 }
 
-function buildPath(feature) {
+function pathFromPolygons(polygons) {
   const path = new Path2D();
-  for (const polygon of feature.polygons) {
+  for (const polygon of polygons) {
     for (const ring of polygon) {
       ring.forEach((point, index) => {
         const [x, y] = project(point);
@@ -93,210 +131,270 @@ function buildPath(feature) {
   return path;
 }
 
-function drawLabels(features) {
+function rebuildPaths() {
+  state.adminPaths.clear();
+  state.gridPaths.clear();
+  for (const admin of adminData.features) state.adminPaths.set(admin.code, pathFromPolygons(admin.polygons));
+  for (const grid of gridData.features) state.gridPaths.set(grid.id, pathFromPolygons(grid.polygons));
+}
+
+function drawAdminBase() {
   ctx.save();
-  ctx.font = "700 11px Pretendard, Segoe UI, sans-serif";
+  for (const admin of adminData.features) {
+    const path = state.adminPaths.get(admin.code);
+    ctx.fillStyle = admin.code === state.selectedAdminCode ? "rgba(245, 246, 241, 0.95)" : "rgba(251, 250, 245, 0.86)";
+    ctx.strokeStyle = "rgba(33, 44, 42, 0.38)";
+    ctx.lineWidth = admin.code === state.selectedAdminCode ? 1.7 : 0.85;
+    ctx.fill(path, "evenodd");
+    ctx.stroke(path);
+  }
+  ctx.restore();
+}
+
+function drawGridLayer() {
+  ctx.save();
+  ctx.globalAlpha = 0.82;
+  for (const grid of gridData.features) {
+    const path = state.gridPaths.get(grid.id);
+    ctx.fillStyle = colorFor(currentValue(grid));
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.34)";
+    ctx.lineWidth = 0.35;
+    ctx.fill(path, "evenodd");
+    ctx.stroke(path);
+  }
+  ctx.restore();
+}
+
+function drawAdminOutlines() {
+  ctx.save();
+  for (const admin of adminData.features) {
+    const selected = admin.code === state.selectedAdminCode;
+    const path = state.adminPaths.get(admin.code);
+    ctx.strokeStyle = selected ? "#102a43" : "rgba(23, 33, 31, 0.62)";
+    ctx.lineWidth = selected ? 3 : 1.15;
+    ctx.stroke(path);
+  }
+  ctx.restore();
+}
+
+function drawSelectedLabel() {
+  const admin = adminData.features.find((item) => item.code === state.selectedAdminCode);
+  if (!admin) return;
+  const [x, y] = project(admin.centroid);
+  ctx.save();
+  ctx.font = "800 15px Pretendard, Segoe UI, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.lineWidth = 3;
-  const activeCode = state.hoverCode || state.selectedCode;
-  const feature = features.find((item) => item.code === activeCode);
-  if (feature) {
-    const [x, y] = project(feature.centroid);
-    ctx.strokeStyle = "rgba(255,253,248,0.92)";
-    ctx.fillStyle = "#17211f";
-    ctx.strokeText(feature.name, x, y);
-    ctx.fillText(feature.name, x, y);
-  }
+  const width = Math.max(78, ctx.measureText(admin.name).width + 28);
+  const height = 32;
+  ctx.fillStyle = "rgba(255, 253, 248, 0.96)";
+  ctx.strokeStyle = "rgba(16, 42, 67, 0.22)";
+  ctx.lineWidth = 1;
+  roundRect(ctx, x - width / 2, y - height / 2, width, height, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#102a43";
+  ctx.fillText(admin.name, x, y + 1);
+  ctx.restore();
+}
+
+function drawHoverGrid() {
+  if (!state.hoverGridId) return;
+  const path = state.gridPaths.get(state.hoverGridId);
+  if (!path) return;
+  ctx.save();
+  ctx.strokeStyle = "#0b2f4a";
+  ctx.lineWidth = 2;
+  ctx.stroke(path);
   ctx.restore();
 }
 
 function draw() {
   const rect = canvas.getBoundingClientRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
-  state.paths.clear();
+  drawAdminBase();
+  drawGridLayer();
+  drawAdminOutlines();
+  drawHoverGrid();
+}
 
-  const features = visibleFeatures();
-  const values = features.map(populationOf).filter((value) => value !== null);
-  const min = values.length ? Math.min(...values) : 0;
-  const max = values.length ? Math.max(...values) : 0;
+function roundRect(context, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.arcTo(x + width, y, x + width, y + height, r);
+  context.arcTo(x + width, y + height, x, y + height, r);
+  context.arcTo(x, y + height, x, y, r);
+  context.arcTo(x, y, x + width, y, r);
+  context.closePath();
+}
 
-  for (const feature of data.features) {
-    const path = buildPath(feature);
-    state.paths.set(feature.code, path);
-    const visible = features.includes(feature);
-    const value = visible ? populationOf(feature) : null;
-    ctx.fillStyle = visible ? colorFor(value, min, max) : "rgba(216,214,207,0.25)";
-    ctx.strokeStyle = visible ? "rgba(255,253,248,0.88)" : "rgba(255,253,248,0.35)";
-    ctx.lineWidth = visible ? 0.9 : 0.5;
-    ctx.fill(path, "evenodd");
-    ctx.stroke(path);
-  }
+function drawHoverGridValue(grid) {
+  const [x, y] = project(grid.centroid);
+  const text = `${numberFormat.format(currentValue(grid))}명`;
 
-  const activeCode = state.hoverCode || state.selectedCode;
-  if (activeCode && state.paths.has(activeCode)) {
-    ctx.save();
-    ctx.strokeStyle = "#17211f";
-    ctx.lineWidth = 2.8;
-    ctx.stroke(state.paths.get(activeCode));
-    ctx.restore();
-  }
-
-  drawLabels(features);
+  ctx.save();
+  ctx.font = "800 14px Pretendard, Segoe UI, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const width = Math.max(68, ctx.measureText(text).width + 22);
+  const height = 28;
+  const labelX = x + 12 + width / 2;
+  const labelY = y - 12;
+  ctx.fillStyle = "rgba(255, 253, 248, 0.97)";
+  ctx.strokeStyle = "rgba(11, 47, 74, 0.28)";
+  ctx.lineWidth = 1;
+  roundRect(ctx, labelX - width / 2, labelY - height / 2, width, height, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#0b2f4a";
+  ctx.fillText(text, labelX, labelY + 1);
+  ctx.restore();
 }
 
 function updateStats() {
-  const features = visibleFeatures();
-  const withValues = features
-    .map((feature) => ({ feature, value: populationOf(feature) }))
-    .filter((item) => item.value !== null)
-    .sort((a, b) => b.value - a.value);
-  const total = withValues.reduce((sum, item) => sum + item.value, 0);
-
-  totalPopulation.textContent = numberFormat.format(total);
-  topArea.textContent = withValues[0] ? withValues[0].feature.name : "-";
-  areaCount.textContent = `${numberFormat.format(withValues.length)} / ${numberFormat.format(features.length)}`;
-  averagePopulation.textContent = withValues.length ? numberFormat.format(Math.round(total / withValues.length)) : "-";
-  rankMeta.textContent = `${hours[state.hourIndex]}시`;
-
-  rankList.innerHTML = "";
-  for (const [index, item] of withValues.entries()) {
-    const li = document.createElement("li");
-    li.dataset.code = item.feature.code;
-    li.innerHTML = `
-      <span class="rank-number">${index + 1}</span>
-      <span class="rank-name"><strong>${item.feature.name}</strong><span>${item.feature.district}</span></span>
-      <span class="rank-value">${numberFormat.format(item.value)}</span>
-    `;
-    li.addEventListener("mouseenter", () => {
-      state.hoverCode = item.feature.code;
-      draw();
-    });
-    li.addEventListener("mouseleave", () => {
-      state.hoverCode = null;
-      draw();
-    });
-    li.addEventListener("click", () => {
-      state.selectedCode = item.feature.code;
-      draw();
-    });
-    rankList.appendChild(li);
+  const hour = currentHour();
+  const grids = gridData.features;
+  let max = -1;
+  let maxId = null;
+  for (const grid of grids) {
+    const value = currentValue(grid);
+    if (value > max) {
+      max = value;
+      maxId = grid.id;
+    }
   }
-}
-
-function syncControls() {
-  const hour = hours[state.hourIndex];
   hourLabel.textContent = `${hour}시`;
-  hourRange.value = String(state.hourIndex);
-  hourHint.textContent =
-    hours.length > 1
-      ? `${hours[0]}시부터 ${hours[hours.length - 1]}시까지 ${hours.length}개 시간대`
-      : `현재 파일에는 ${hour}시 데이터만 있습니다`;
-  playButton.disabled = hours.length < 2;
-  sourceInfo.textContent = `${data.summary.source} · 기준일 ${formatDate(data.summary.baseDate)} · ${data.summary.populatedFeatureCount}개 동`;
+  maxGrid.textContent = `#${numberFormat.format(maxId)} · ${numberFormat.format(max)}명`;
 }
 
-function formatDate(value) {
-  if (!value || value.length !== 8) return value || "-";
-  return `${value.slice(0, 4)}.${value.slice(4, 6)}.${value.slice(6, 8)}`;
-}
-
-function updateView() {
-  syncControls();
-  updateStats();
+function updateSelectedAdmin(admin) {
+  state.selectedAdminCode = admin?.code || null;
+  const name = admin?.name || "지도를 클릭하세요";
+  selectedDong.textContent = name;
+  panelDong.textContent = admin ? name : "-";
   draw();
 }
 
-function initializeControls() {
-  hourRange.min = "0";
-  hourRange.max = String(Math.max(0, hours.length - 1));
-  hourRange.disabled = hours.length < 2;
-
-  const districts = ["전체", ...new Set(data.features.map((feature) => feature.district))].sort((a, b) =>
-    a === "전체" ? -1 : b === "전체" ? 1 : a.localeCompare(b, "ko-KR")
-  );
-  districtFilter.innerHTML = districts.map((district) => `<option value="${district}">${district}</option>`).join("");
-
-  hourRange.addEventListener("input", (event) => {
-    state.hourIndex = Number(event.target.value);
-    updateView();
-  });
-
-  districtFilter.addEventListener("change", (event) => {
-    state.district = event.target.value;
-    state.selectedCode = null;
-    updateView();
-  });
-
-  searchInput.addEventListener("input", (event) => {
-    state.query = event.target.value;
-    state.selectedCode = null;
-    updateView();
-  });
-
-  playButton.addEventListener("click", () => {
-    if (state.timer) {
-      clearInterval(state.timer);
-      state.timer = null;
-      playButton.textContent = "▶";
-      return;
-    }
-    playButton.textContent = "Ⅱ";
-    state.timer = setInterval(() => {
-      state.hourIndex = (state.hourIndex + 1) % hours.length;
-      updateView();
-    }, 900);
-  });
+function adminAt(x, y) {
+  const hitX = x * state.dpr;
+  const hitY = y * state.dpr;
+  for (let i = adminData.features.length - 1; i >= 0; i -= 1) {
+    const admin = adminData.features[i];
+    const path = state.adminPaths.get(admin.code);
+    if (path && ctx.isPointInPath(path, hitX, hitY, "evenodd")) return admin;
+  }
+  return null;
 }
 
-function featureAt(x, y) {
-  for (let i = data.features.length - 1; i >= 0; i -= 1) {
-    const feature = data.features[i];
-    const path = state.paths.get(feature.code);
-    if (path && ctx.isPointInPath(path, x, y, "evenodd")) return feature;
+function gridAt(x, y) {
+  const hitX = x * state.dpr;
+  const hitY = y * state.dpr;
+  for (let i = gridData.features.length - 1; i >= 0; i -= 1) {
+    const grid = gridData.features[i];
+    const path = state.gridPaths.get(grid.id);
+    if (path && ctx.isPointInPath(path, hitX, hitY, "evenodd")) return grid;
   }
   return null;
 }
 
 canvas.addEventListener("mousemove", (event) => {
-  const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-  const feature = featureAt(x, y);
-  state.hoverCode = feature?.code || null;
-  draw();
-
-  if (!feature) {
+  if (state.isDragging) {
+    const rect = canvas.getBoundingClientRect();
+    state.panX = state.dragPanStart.x + event.clientX - state.dragStart.x;
+    state.panY = state.dragPanStart.y + event.clientY - state.dragStart.y;
+    applyZoomTransform();
+    rebuildPaths();
     tooltip.classList.remove("visible");
+    draw();
     return;
   }
 
-  const value = populationOf(feature);
-  tooltip.innerHTML = `
-    <strong>${feature.name}</strong>
-    <span>${feature.district} · ${hours[state.hourIndex]}시</span>
-    <span>${value === null ? "데이터 없음" : `${numberFormat.format(value)}명`}</span>
-  `;
-  tooltip.style.transform = `translate(${Math.min(x + 16, rect.width - 190)}px, ${Math.min(y + 16, rect.height - 92)}px)`;
-  tooltip.classList.add("visible");
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const grid = gridAt(x, y);
+  state.hoverGridId = grid?.id || null;
+  tooltip.classList.remove("visible");
+  draw();
+  if (grid) drawHoverGridValue(grid);
 });
 
 canvas.addEventListener("mouseleave", () => {
-  state.hoverCode = null;
+  state.isDragging = false;
+  state.hoverGridId = null;
   tooltip.classList.remove("visible");
+  canvas.classList.remove("is-dragging");
   draw();
 });
 
 canvas.addEventListener("click", (event) => {
+  if (state.dragMoved) {
+    state.dragMoved = false;
+    return;
+  }
   const rect = canvas.getBoundingClientRect();
-  const feature = featureAt(event.clientX - rect.left, event.clientY - rect.top);
-  state.selectedCode = feature?.code || null;
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  tooltip.classList.remove("visible");
+  updateSelectedAdmin(adminAt(x, y));
+});
+
+canvas.addEventListener("mousedown", (event) => {
+  if (event.button !== 0 || state.zoom <= 1) return;
+  event.preventDefault();
+  state.isDragging = true;
+  state.dragMoved = false;
+  state.dragStart = { x: event.clientX, y: event.clientY };
+  state.dragPanStart = { x: state.panX, y: state.panY };
+  canvas.classList.add("is-dragging");
+});
+
+window.addEventListener("mouseup", () => {
+  if (!state.isDragging) return;
+  state.isDragging = false;
+  canvas.classList.remove("is-dragging");
+});
+
+window.addEventListener("mousemove", (event) => {
+  if (!state.isDragging) return;
+  const movedX = Math.abs(event.clientX - state.dragStart.x);
+  const movedY = Math.abs(event.clientY - state.dragStart.y);
+  state.dragMoved = movedX > 4 || movedY > 4;
+});
+
+canvas.addEventListener(
+  "wheel",
+  (event) => {
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const previousZoom = state.zoom;
+    const zoomFactor = Math.exp(-event.deltaY * 0.0014);
+    state.zoom = Math.min(8, Math.max(1, state.zoom * zoomFactor));
+
+    if (state.zoom === 1) {
+      state.panX = 0;
+      state.panY = 0;
+      state.dragMoved = false;
+      applyZoomTransform();
+    } else {
+      applyZoomTransform(event.clientX - rect.left, event.clientY - rect.top, previousZoom);
+    }
+
+    rebuildPaths();
+    draw();
+  },
+  { passive: false }
+);
+
+hourRange.addEventListener("input", (event) => {
+  state.hourIndex = Number(event.target.value);
+  updateStats();
   draw();
 });
 
 window.addEventListener("resize", resizeCanvas);
 
-initializeControls();
-syncControls();
+buildLegend();
 updateStats();
 resizeCanvas();
