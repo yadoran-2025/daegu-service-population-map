@@ -9,28 +9,27 @@ const tooltip = document.getElementById("tooltip");
 const hourRange = document.getElementById("hourRange");
 const hourLabel = document.getElementById("hourLabel");
 const selectedDong = document.getElementById("selectedDong");
-const panelDong = document.getElementById("panelDong");
-const maxMetricLabel = document.getElementById("maxMetricLabel");
-const maxGrid = document.getElementById("maxGrid");
-const legendTitle = document.getElementById("legendTitle");
+const selectedDongDensity = document.getElementById("selectedDongDensity");
 const legendItems = document.getElementById("legendItems");
 const subwayLegend = document.getElementById("subwayLegend");
 const subwayLegendItems = document.getElementById("subwayLegendItems");
 const timebar = document.querySelector(".timebar");
 const notesTitle = document.getElementById("notesTitle");
 const notesText = document.getElementById("notesText");
-const mapModeButtons = document.querySelectorAll("[data-map-mode]");
+const densityLegend = document.getElementById("densityLegend");
+const densityLegendItems = document.getElementById("densityLegendItems");
+const mapDongPill = document.getElementById("mapDongPill");
 const mapHelpOpen = document.getElementById("mapHelpOpen");
+const mapHelpOpenMobile = document.getElementById("mapHelpOpenMobile");
 const mapHelpDialog = document.getElementById("mapHelpDialog");
 const mapHelpClose = document.getElementById("mapHelpClose");
-const subwayToggle = document.getElementById("subwayToggle");
 
 const numberFormat = new Intl.NumberFormat("ko-KR");
 const state = {
-  mapMode: "flow",
+  showDensity: false,
+  showFlow: true,
   hourIndex: 0,
   selectedAdminCode: null,
-  hoverAdminCode: null,
   hoverGridId: null,
   hoverStationId: null,
   selectedStationId: null,
@@ -59,10 +58,6 @@ function currentValue(grid) {
   return grid.values[currentHour()] ?? 0;
 }
 
-function isDensityMode() {
-  return state.mapMode === "density";
-}
-
 function colorFor(value) {
   const breaks = gridData.breaks;
   const colors = gridData.colors;
@@ -86,16 +81,26 @@ function labelForBreak(index, breaks) {
   return `${numberFormat.format(breaks[index])}~${numberFormat.format(breaks[index + 1])}`;
 }
 
-function buildLegend() {
-  const source = isDensityMode() ? densityData : gridData;
-  const unit = isDensityMode() ? "명/km²" : "명";
-  legendTitle.textContent = isDensityMode() ? "행정동 인구밀도" : "그리드 유동인구";
-  legendItems.innerHTML = source.colors
+function buildFlowLegend() {
+  legendItems.innerHTML = gridData.colors
     .map(
       (color, index) => `
         <div class="legend-item">
           <span class="swatch" style="background:${color}"></span>
-          <span>${labelForBreak(index, source.breaks)}${unit}</span>
+          <span>${labelForBreak(index, gridData.breaks)}명</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function buildDensityLegend() {
+  densityLegendItems.innerHTML = densityData.colors
+    .map(
+      (color, index) => `
+        <div class="legend-item">
+          <span class="swatch" style="background:${color}"></span>
+          <span>${labelForBreak(index, densityData.breaks)}명/km²</span>
         </div>
       `
     )
@@ -225,7 +230,7 @@ function drawGridLayer() {
 function drawDensityLayer() {
   if (!state.pathsReady) return;
   ctx.save();
-  ctx.globalAlpha = 0.88;
+  ctx.globalAlpha = state.showFlow ? 0.42 : 0.86;
   for (const admin of adminData.features) {
     const density = densityFeatureForAdmin(admin);
     if (!density) continue;
@@ -275,18 +280,6 @@ function drawSelectedLabel() {
 }
 
 function drawHoverGrid() {
-  if (isDensityMode()) {
-    if (!state.hoverAdminCode) return;
-    const path = state.adminPaths.get(state.hoverAdminCode);
-    if (!path) return;
-    ctx.save();
-    ctx.strokeStyle = "#0b2f4a";
-    ctx.lineWidth = 2;
-    ctx.stroke(path);
-    ctx.restore();
-    return;
-  }
-
   if (!state.hoverGridId) return;
   const path = state.gridPaths.get(state.hoverGridId);
   if (!path) return;
@@ -379,11 +372,11 @@ function draw() {
   const rect = canvas.getBoundingClientRect();
   ctx.clearRect(0, 0, rect.width, rect.height);
   drawAdminBase();
-  if (isDensityMode()) drawDensityLayer();
-  else drawGridLayer();
+  if (state.showDensity) drawDensityLayer();
+  if (state.showFlow) drawGridLayer();
   drawAdminOutlines();
   drawHoverGrid();
-  drawSelectedDensityValue();
+  if (state.showDensity) drawSelectedDensityValue();
   drawSubwayLayer();
 }
 
@@ -452,90 +445,65 @@ function drawDensityValue(feature, admin) {
 }
 
 function drawSelectedDensityValue() {
-  if (!isDensityMode() || !state.selectedAdminCode) return;
+  if (!state.showDensity || !state.selectedAdminCode) return;
   const admin = adminData.features.find((item) => item.code === state.selectedAdminCode);
   const density = densityFeatureForAdmin(admin);
   if (density) drawDensityValue(density, admin);
 }
 
 function updateStats() {
-  if (isDensityMode()) {
-    let max = -1;
-    let maxFeature = null;
-    for (const feature of densityData.features) {
-      if (feature.density > max) {
-        max = feature.density;
-        maxFeature = feature;
-      }
-    }
-    hourLabel.textContent = "밀도";
-    maxMetricLabel.textContent = "최대 밀도 행정동";
-    maxGrid.textContent = `${maxFeature.name} · ${numberFormat.format(Math.round(max))}명/km²`;
-    return;
-  }
-
-  const hour = currentHour();
-  const grids = gridData.features;
-  let max = -1;
-  let maxId = null;
-  for (const grid of grids) {
-    const value = currentValue(grid);
-    if (value > max) {
-      max = value;
-      maxId = grid.id;
-    }
-  }
-  hourLabel.textContent = `${hour}시`;
-  maxMetricLabel.textContent = "최대 그리드";
-  maxGrid.textContent = `#${numberFormat.format(maxId)} · ${numberFormat.format(max)}명`;
+  hourLabel.textContent = `${currentHour()}시`;
 }
 
 function updateSelectedAdmin(admin) {
   state.selectedAdminCode = admin?.code || null;
   const name = admin?.name || "지도를 클릭하세요";
-  selectedDong.textContent = name;
   const density = densityFeatureForAdmin(admin);
-  panelDong.textContent =
-    admin && isDensityMode() && density
-      ? `${name} · ${numberFormat.format(Math.round(density.density))}명/km²`
-      : admin
-        ? name
-        : "-";
+  const densityText = density ? `${numberFormat.format(Math.round(density.density))} 명/km²` : "";
+
+  selectedDong.textContent = name;
+  selectedDongDensity.textContent = admin ? densityText : "";
+
+  if (admin) {
+    mapDongPill.innerHTML = `<strong>${name}</strong>${densityText ? `<span>${densityText}</span>` : ""}`;
+    mapDongPill.classList.remove("is-hidden");
+  } else {
+    mapDongPill.classList.add("is-hidden");
+  }
   draw();
 }
 
-function updateModeUi() {
-  const densityMode = isDensityMode();
-  mapModeButtons.forEach((button) => {
-    const active = button.dataset.mapMode === state.mapMode;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", String(active));
+function syncLayerButtons(layer, active) {
+  document.querySelectorAll(`[data-layer="${layer}"]`).forEach((btn) => {
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-pressed", String(active));
   });
+}
 
-  hourRange.disabled = densityMode;
-  timebar.classList.toggle("is-density-mode", densityMode);
-  notesTitle.textContent = densityMode ? "인구밀도 기준" : "색상 기준";
-  notesText.textContent = densityMode
-    ? "행정동별 거주자 인구수를 면적으로 나눈 값입니다. 색이 진할수록 1km²당 거주 인구가 많은 지역입니다."
-    : "모든 시간대에 같은 절대 범위를 적용합니다. 슬라이더를 움직여도 같은 인구 구간은 같은 색으로 표시됩니다.";
+function toggleFlow() {
+  state.showFlow = !state.showFlow;
+  syncLayerButtons("flow", state.showFlow);
+  const flowLegendEl = document.querySelector(".legend:not(#densityLegend)");
+  if (flowLegendEl) flowLegendEl.classList.toggle("is-hidden", !state.showFlow);
+  draw();
+}
 
-  state.hoverGridId = null;
-  state.hoverAdminCode = null;
-  buildLegend();
-  updateStats();
-  const selectedAdmin = state.selectedAdminCode ? adminData.features.find((admin) => admin.code === state.selectedAdminCode) : null;
+function toggleDensity() {
+  state.showDensity = !state.showDensity;
+  syncLayerButtons("density", state.showDensity);
+  densityLegend.classList.toggle("is-hidden", !state.showDensity);
+  const selectedAdmin = state.selectedAdminCode ? adminData.features.find((a) => a.code === state.selectedAdminCode) : null;
   if (state.pathsReady) updateSelectedAdmin(selectedAdmin);
-  else {
-    const name = selectedAdmin?.name || "지도를 클릭하세요";
-    selectedDong.textContent = name;
-    const density = densityFeatureForAdmin(selectedAdmin);
-    panelDong.textContent =
-      selectedAdmin && densityMode && density
-        ? `${name} · ${numberFormat.format(Math.round(density.density))}명/km²`
-        : selectedAdmin
-          ? name
-          : "-";
-  }
+  draw();
+}
+
+function toggleSubway() {
+  state.showSubway = !state.showSubway;
+  state.hoverStationId = null;
+  state.selectedStationId = null;
+  syncLayerButtons("subway", state.showSubway);
+  subwayLegend.classList.toggle("is-hidden", !state.showSubway);
+  draw();
 }
 
 function adminAt(x, y) {
@@ -582,7 +550,6 @@ function stationAt(x, y) {
 
 canvas.addEventListener("mousemove", (event) => {
   if (state.isDragging) {
-    const rect = canvas.getBoundingClientRect();
     state.panX = state.dragPanStart.x + event.clientX - state.dragStart.x;
     state.panY = state.dragPanStart.y + event.clientY - state.dragStart.y;
     applyZoomTransform();
@@ -596,22 +563,19 @@ canvas.addEventListener("mousemove", (event) => {
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
   const admin = adminAt(x, y);
-  const density = densityFeatureForAdmin(admin);
-  const grid = isDensityMode() ? null : gridAt(x, y);
+  const grid = gridAt(x, y);
   const station = stationAt(x, y);
   state.hoverGridId = grid?.id || null;
-  state.hoverAdminCode = isDensityMode() ? admin?.code || null : null;
   state.hoverStationId = station?.id || null;
   tooltip.classList.remove("visible");
   draw();
-  if (grid && !station) drawHoverGridValue(grid);
-  if (isDensityMode() && density && !station) drawDensityValue(density, admin);
+  const onMobile = window.matchMedia("(max-width: 620px)").matches;
+  if (!onMobile && state.showFlow && grid && !station) drawHoverGridValue(grid);
 });
 
 canvas.addEventListener("mouseleave", () => {
   state.isDragging = false;
   state.hoverGridId = null;
-  state.hoverAdminCode = null;
   state.hoverStationId = null;
   tooltip.classList.remove("visible");
   canvas.classList.remove("is-dragging");
@@ -687,20 +651,21 @@ canvas.addEventListener(
 
 hourRange.addEventListener("input", (event) => {
   state.hourIndex = Number(event.target.value);
-  if (isDensityMode()) return;
   updateStats();
   draw();
 });
 
-mapModeButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    state.mapMode = button.dataset.mapMode;
-    updateModeUi();
+document.querySelectorAll("[data-layer]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const layer = btn.dataset.layer;
+    if (layer === "flow") toggleFlow();
+    else if (layer === "density") toggleDensity();
+    else if (layer === "subway") toggleSubway();
   });
 });
 
-mapHelpOpen.addEventListener("click", () => {
-  mapHelpDialog.showModal();
+[mapHelpOpen, mapHelpOpenMobile].forEach((btn) => {
+  btn.addEventListener("click", () => mapHelpDialog.showModal());
 });
 
 mapHelpClose.addEventListener("click", () => {
@@ -711,18 +676,10 @@ mapHelpDialog.addEventListener("click", (event) => {
   if (event.target === mapHelpDialog) mapHelpDialog.close();
 });
 
-subwayToggle.addEventListener("click", () => {
-  state.showSubway = !state.showSubway;
-  state.hoverStationId = null;
-  state.selectedStationId = null;
-  subwayToggle.classList.toggle("is-active", state.showSubway);
-  subwayToggle.setAttribute("aria-pressed", String(state.showSubway));
-  subwayLegend.classList.toggle("is-hidden", !state.showSubway);
-  draw();
-});
-
 window.addEventListener("resize", resizeCanvas);
 
 buildSubwayLegend();
-updateModeUi();
+buildFlowLegend();
+buildDensityLegend();
+updateStats();
 resizeCanvas();

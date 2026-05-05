@@ -18,19 +18,33 @@
           <div class="selected-dong" aria-live="polite">
             <span>선택 행정동</span>
             <strong id="selectedDong">지도를 클릭하세요</strong>
+            <span id="selectedDongDensity"></span>
           </div>
+          <button class="topbar-help" type="button" id="mapHelpOpenMobile" aria-haspopup="dialog" aria-label="이 지도는 무엇인가요?">?</button>
         </header>
 
         <div class="map-wrap">
           <canvas id="mapCanvas" aria-label="행정동 경계 위 그리드 유동인구 지도"></canvas>
           <div class="tooltip" id="tooltip" role="status"></div>
+          <div class="map-dong-pill is-hidden" id="mapDongPill" aria-live="polite"></div>
+          <div class="map-layer-chips">
+            <button class="map-chip is-active" type="button" data-layer="flow" aria-pressed="true">유동인구</button>
+            <button class="map-chip" type="button" data-layer="density" aria-pressed="false">밀도</button>
+            <button class="map-chip is-active" type="button" data-layer="subway" aria-pressed="true">지하철</button>
+          </div>
           <div class="subway-legend" id="subwayLegend" aria-label="지하철 호선 범례">
             <div class="legend-title">지하철 노선</div>
             <div class="subway-legend-items" id="subwayLegendItems"></div>
           </div>
-          <div class="legend" aria-label="유동인구 색상 범례">
-            <div class="legend-title" id="legendTitle">그리드 유동인구</div>
-            <div class="legend-items" id="legendItems"></div>
+          <div class="legend-stack">
+            <div class="legend is-hidden" id="densityLegend" aria-label="인구밀도 색상 범례">
+              <div class="legend-title">행정동 인구밀도</div>
+              <div class="legend-items" id="densityLegendItems"></div>
+            </div>
+            <div class="legend" aria-label="유동인구 색상 범례">
+              <div class="legend-title">그리드 유동인구</div>
+              <div class="legend-items" id="legendItems"></div>
+            </div>
           </div>
         </div>
 
@@ -52,21 +66,15 @@
       </section>
 
       <aside class="info-panel" aria-label="지도 요약 정보">
-        <div class="mode-switch" role="group" aria-label="지도 표시 방식">
-          <button class="is-active" type="button" data-map-mode="flow" aria-pressed="true">유동인구</button>
-          <button type="button" data-map-mode="density" aria-pressed="false">인구밀도</button>
-        </div>
-        <button class="layer-toggle is-active" type="button" id="subwayToggle" aria-pressed="true">
+        <button class="layer-toggle is-active" type="button" id="flowToggle" data-layer="flow" aria-pressed="true">
+          유동인구 표시
+        </button>
+        <button class="layer-toggle" type="button" id="densityToggle" data-layer="density" aria-pressed="false">
+          인구밀도 표시
+        </button>
+        <button class="layer-toggle is-active" type="button" id="subwayToggle" data-layer="subway" aria-pressed="true">
           지하철 노선·역 표시
         </button>
-        <section class="metric-block">
-          <span id="maxMetricLabel">최대 그리드</span>
-          <strong id="maxGrid">-</strong>
-        </section>
-        <section class="metric-block">
-          <span>선택 행정동</span>
-          <strong id="panelDong">-</strong>
-        </section>
         <section class="notes">
           <h2 id="notesTitle">색상 기준</h2>
           <p id="notesText">모든 시간대에 같은 절대 범위를 적용합니다. 슬라이더를 움직여도 같은 인구 구간은 같은 색으로 표시됩니다.</p>
